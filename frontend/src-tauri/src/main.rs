@@ -9,6 +9,19 @@ use std::io::{Read, Write};
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
 
+// --- GÜNCELLEME İÇİN GEREKLİ MODÜLLER ---
+use std::fs;
+use std::process::Command;
+
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
+
+const CURRENT_VERSION: &str = "1.0.0"; // Şu anki uygulamanın sürümü
+const VERSION_URL: &str = "https://raw.githubusercontent.com/aknlevt-coder/final-musicsy/main/version.txt";
+const DOWNLOAD_URL: &str = "https://github.com/aknlevt-coder/final-musicsy/releases/download/musicsyLatest/musicsy.exe";
+// =========================================================================
+
 #[derive(Serialize)]
 struct TrackInfo {
     id: String,
@@ -107,12 +120,10 @@ async fn search_youtube(app: AppHandle, query: String) -> Result<TrackInfo, Stri
 async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) -> Result<String, String> {
     let clean_title = title.replace(|c: char| !c.is_alphanumeric() && c != ' ', "");
     
-    // İşletim sisteminin geçici (Temp) klasörüne indiriyoruz[cite: 3]
     let temp_dir = std::env::temp_dir();
     let output_path = temp_dir.join(format!("{}.mp3", clean_title));
     let output_str = output_path.to_str().unwrap().to_string();
 
-    // 1. Gömülü FFmpeg klasörünün yolunu dinamik olarak buluyoruz
     let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
     let ffmpeg_dir = resource_dir.join("ffmpeg");
     let ffmpeg_str = ffmpeg_dir.to_str().unwrap().to_string();
@@ -126,7 +137,6 @@ async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) 
             "--audio-format", "mp3",
             "--audio-quality", "0",
             "--extractor-args", "youtube:player_client=android,ios",
-            // 2. yt-dlp'ye bu klasörü gösteriyoruz
             "--ffmpeg-location", &ffmpeg_str,
             "--newline",
             "-o", &output_str,
@@ -162,7 +172,6 @@ async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) 
     }
 
     if output_path.exists() {
-        // İndirilen geçici dosyanın tam yolunu frontend'e döndür[cite: 3]
         Ok(output_str)
     } else {
         Err(error_output)
@@ -177,7 +186,6 @@ async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>) -> Result<
 
     let download_dir = app.path().download_dir().unwrap_or_else(|_| PathBuf::from("C:/"));
 
-    // Tek dosyaysa ZIP yapmaya gerek yok, direkt taşı[cite: 3]
     if file_paths.len() == 1 {
         let src = PathBuf::from(&file_paths[0]);
         let filename = src.file_name().unwrap().to_string_lossy().to_string();
@@ -190,7 +198,6 @@ async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>) -> Result<
         return Ok(format!("Şarkı kaydedildi: {}", dest.display()));
     }
 
-    // Birden fazla dosyaysa ZIP arşivi oluştur[cite: 3]
     let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let zip_filename = format!("MusicSy_Paket_{}.zip", timestamp);
     let dest_path = download_dir.join(&zip_filename);
@@ -211,7 +218,6 @@ async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>) -> Result<
         f.read_to_end(&mut buffer).map_err(|e| e.to_string())?;
         zip.write_all(&buffer).map_err(|e| e.to_string())?;
         
-        // Geçici dosyayı sil[cite: 3]
         let _ = std::fs::remove_file(&path);
     }
     
@@ -244,7 +250,69 @@ async fn update_yt_dlp(app: AppHandle) -> Result<String, String> {
     Ok(stdout.to_string())
 }
 
+// --- OTOMATİK GÜNCELLEME FONKSİYONU ---
+fn update_in_place() -> Result<(), Box<dyn std::error::Error>> {
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("MusicsyUpdater")
+        .build()?;
+
+    // 1. GitHub'daki en son sürümü oku
+    let latest_version = client.get(VERSION_URL).send()?.text()?.trim().to_string();
+
+    // Sürüm aynıysa güncelleme yapma
+    if latest_version == CURRENT_VERSION {
+        return Ok(());
+    }
+
+    println!("Yeni sürüm (v{}) bulundu. Güncelleniyor...", latest_version);
+
+    // 2. Çalışan uygulamanın konumunu bul
+    let current_exe = std::env::current_exe()?;
+    let exe_dir = current_exe.parent().ok_or("Uygulama dizini bulunamadı")?;
+
+    let temp_file = exe_dir.join("update_download.tmp");
+    let old_file = exe_dir.join("app.old");
+
+    // Eski geçici dosyalar kalmışsa temizle
+    let _ = fs::remove_file(&temp_file);
+    let _ = fs::remove_file(&old_file);
+
+    // 3. Yeni app.exe'yi indir
+    let mut response = client.get(DOWNLOAD_URL).send()?;
+    let mut file = fs::File::create(&temp_file)?;
+    response.copy_to(&mut file)?;
+    drop(file);
+
+    // 4. Dosya takası (Atomik Swap)
+    fs::rename(&current_exe, &old_file)?;
+    fs::rename(&temp_file, &current_exe)?;
+
+    // 5. Yeni sürümü hemen başlat
+    Command::new(&current_exe).spawn()?;
+
+    // 6. Arka planda terminal penceresi açmadan eski dosyayı (app.old) temizle
+    #[cfg(windows)]
+    {
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+        let old_file_str = old_file.to_str().unwrap_or("");
+        let cleanup_cmd = format!("timeout /t 1 /nobreak > NUL & del /f /q \"{}\"", old_file_str);
+
+        Command::new("cmd")
+            .args(&["/C", &cleanup_cmd])
+            .creation_flags(CREATE_NO_WINDOW)
+            .spawn()?;
+    }
+
+    // Eski uygulamayı sonlandır
+    std::process::exit(0);
+}
+
 fn main() {
+    // Arayüz açılmadan hemen önce arka planda sürümü kontrol et
+    if let Err(e) = update_in_place() {
+        eprintln!("Güncelleme kontrolü atlandı veya başarısız: {}", e);
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
