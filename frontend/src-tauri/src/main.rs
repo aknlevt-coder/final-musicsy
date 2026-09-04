@@ -1,5 +1,5 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use tauri::{AppHandle, Manager, Emitter}; // v2 için Manager ve Emitter eklendi
+use tauri::{AppHandle, Manager, Emitter};
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
 use serde::Serialize;
@@ -16,10 +16,10 @@ use std::process::Command;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
+// 1. DÖNGÜYÜ BİTİREN KISIM: Cargo.toml içindeki sürümü otomatik çeker (Elle 1.0.0 yazmıyoruz!)
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VERSION_URL: &str = "https://raw.githubusercontent.com/aknlevt-coder/final-musicsy/main/version.txt";
 const DOWNLOAD_URL: &str = "https://github.com/aknlevt-coder/final-musicsy/releases/download/musicsyLatest/musicsy.exe";
-// =========================================================================
 
 #[derive(Serialize)]
 struct TrackInfo {
@@ -265,6 +265,17 @@ async fn update_yt_dlp(app: AppHandle) -> Result<String, String> {
 
 // --- OTOMATİK GÜNCELLEME FONKSİYONU ---
 fn update_in_place() -> Result<(), Box<dyn std::error::Error>> {
+    let current_exe = std::env::current_exe()?;
+    let exe_dir = current_exe.parent().ok_or("Uygulama dizini bulunamadı")?;
+    
+    // DÖNGÜ ÖNLEYİCİ KİLİT DOSYASI
+    let lock_file = exe_dir.join("updating.lock");
+    if lock_file.exists() {
+        let _ = fs::remove_file(&lock_file);
+        eprintln!("Güncelleme az önce yapıldı ancak sürüm değişmedi! Döngü kırıldı.");
+        return Ok(());
+    }
+
     let client = reqwest::blocking::Client::builder()
         .user_agent("MusicsyUpdater")
         .build()?;
@@ -272,43 +283,39 @@ fn update_in_place() -> Result<(), Box<dyn std::error::Error>> {
     // 1. GitHub'daki en son sürümü oku
     let latest_version = client.get(VERSION_URL).send()?.text()?.trim().to_string();
 
-    // Sürüm aynıysa güncelleme yapma
-    if latest_version == CURRENT_VERSION {
+    // Sürüm aynıysa hiçbir şey yapma
+    if latest_version.is_empty() || latest_version == CURRENT_VERSION {
         return Ok(());
     }
 
-    println!("Yeni sürüm (v{}) bulundu. Güncelleniyor...", latest_version);
-
-    // 2. Çalışan uygulamanın konumunu bul
-    let current_exe = std::env::current_exe()?;
-    let exe_dir = current_exe.parent().ok_or("Uygulama dizini bulunamadı")?;
-
     let temp_file = exe_dir.join("update_download.tmp");
-    let old_file = exe_dir.join("musicsy.old");
+    let old_file = exe_dir.join("musicsy.old"); // app.old değil, musicsy.old yapıldı
 
-    // Eski geçici dosyalar kalmışsa temizle
     let _ = fs::remove_file(&temp_file);
     let _ = fs::remove_file(&old_file);
 
-    // 3. Yeni app.exe'yi indir
+    // 2. Yeni dosyayı indir
     let mut response = client.get(DOWNLOAD_URL).send()?;
     let mut file = fs::File::create(&temp_file)?;
     response.copy_to(&mut file)?;
     drop(file);
 
-    // 4. Dosya takası (Atomik Swap)
+    // Bir sonraki açılışta sürüm değişmemişse sonsuz döngüye girmesin diye kilit bırakıyoruz
+    let _ = fs::File::create(&lock_file);
+
+    // 3. Dosya takası
     fs::rename(&current_exe, &old_file)?;
     fs::rename(&temp_file, &current_exe)?;
 
-    // 5. Yeni sürümü hemen başlat
+    // 4. Yeni sürümü hemen başlat
     Command::new(&current_exe).spawn()?;
 
-    // 6. Arka planda terminal penceresi açmadan eski dosyayı (app.old) temizle
+    // 5. Arka planda terminal penceresi açmadan eski musicsy.old dosyasını sil
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
         let old_file_str = old_file.to_str().unwrap_or("");
-        let cleanup_cmd = format!("timeout /t 1 /nobreak > NUL & del /f /q \"{}\"", old_file_str);
+        let cleanup_cmd = format!("timeout /t 2 /nobreak > NUL & del /f /q \"{}\"", old_file_str);
 
         Command::new("cmd")
             .args(&["/C", &cleanup_cmd])
@@ -316,16 +323,15 @@ fn update_in_place() -> Result<(), Box<dyn std::error::Error>> {
             .spawn()?;
     }
 
-    // Eski uygulamayı sonlandır
     std::process::exit(0);
 }
 
 fn main() {
-    // Hatayı görmek için dosyaya yazdıralım:
+    // Arayüz açılmadan hemen önce güncelleme kontrolü
     if let Err(e) = update_in_place() {
-        let _ = std::fs::write("guncelleme_log.txt", format!("Hata Detayı: {:?}", e));
+        let _ = std::fs::write("guncelleme_log.txt", format!("Hata: {:?}", e));
     }
-    // ... geri kalanı aynı
+
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
