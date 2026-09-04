@@ -322,11 +322,13 @@ fn update_in_place() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn main() {
-    // Arayüz açılmadan hemen önce arka planda sürümü kontrol et
+    // Hatayı görmek için dosyaya yazdıralım:
     if let Err(e) = update_in_place() {
-        eprintln!("Güncelleme kontrolü atlandı veya başarısız: {}", e);
+        let _ = std::fs::write("guncelleme_log.txt", format!("Hata Detayı: {:?}", e));
     }
 
+    tauri::Builder::default()
+    // ... geri kalanı aynı
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
