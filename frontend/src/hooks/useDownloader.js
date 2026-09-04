@@ -74,7 +74,11 @@ export const useDownloader = (tracks, setTracks) => {
       });
 
       if (!isBatch) {
-        await invoke('create_zip_and_save', { filePaths: [downloadedFilePath] });
+        const targetDir = localStorage.getItem('musicsy_download_path');
+        await invoke('create_zip_and_save', { 
+            filePaths: [downloadedFilePath],
+            targetDir: targetDir || null
+        });
       }
 
       return downloadedFilePath;
@@ -141,7 +145,11 @@ export const useDownloader = (tracks, setTracks) => {
   const handleSavePackage = async () => {
     setIsSaving(true);
     try {
-      const result = await invoke('create_zip_and_save', { filePaths: downloadedFiles });
+      const targetDir = localStorage.getItem('musicsy_download_path');
+      const result = await invoke('create_zip_and_save', { 
+          filePaths: downloadedFiles,
+          targetDir: targetDir || null
+      });
       alert(result);
       setIsPackageReady(false);
       setDownloadedFiles([]);

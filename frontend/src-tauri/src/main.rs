@@ -51,7 +51,7 @@ async fn parse_youtube(app: AppHandle, url: String) -> Result<ParseResponse, Str
     let output = app.shell()
         .sidecar("yt-dlp")
         .map_err(|e| e.to_string())?
-        .args(["--dump-json", "--flat-playlist", &url])
+        .args(["--dump-json", "--flat-playlist", "--", &url])
         .output()
         .await
         .map_err(|e| e.to_string())?;
@@ -92,7 +92,7 @@ async fn search_youtube(app: AppHandle, query: String) -> Result<TrackInfo, Stri
     let output = app.shell()
         .sidecar("yt-dlp")
         .map_err(|e| e.to_string())?
-        .args(["--dump-json", &search_query])
+        .args(["--dump-json", "--", &search_query])
         .output()
         .await
         .map_err(|e| e.to_string())?;
@@ -132,7 +132,6 @@ async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) 
         .sidecar("yt-dlp")
         .map_err(|e| e.to_string())?
         .args([
-            &url,
             "-x",
             "--audio-format", "mp3",
             "--audio-quality", "0",
@@ -140,7 +139,9 @@ async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) 
             "--ffmpeg-location", &ffmpeg_str,
             "--newline",
             "-o", &output_str,
-            "--no-playlist"
+            "--no-playlist",
+            "--",
+            &url
         ])
         .spawn()
         .map_err(|e| e.to_string())?;
@@ -179,15 +180,25 @@ async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) 
 }
 
 #[tauri::command]
-async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>) -> Result<String, String> {
+async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>, target_dir: Option<String>) -> Result<String, String> {
     if file_paths.is_empty() {
         return Err("Paketlenecek dosya bulunamadı.".into());
     }
 
-    let download_dir = app.path().download_dir().unwrap_or_else(|_| PathBuf::from("C:/"));
+    let download_dir = if let Some(dir) = target_dir {
+        PathBuf::from(dir)
+    } else {
+        app.path().download_dir().unwrap_or_else(|_| PathBuf::from("C:/"))
+    };
+
+    let temp_dir = std::env::temp_dir();
 
     if file_paths.len() == 1 {
         let src = PathBuf::from(&file_paths[0]);
+        if !src.starts_with(&temp_dir) {
+            return Err("Güvenlik ihlali: Sadece geçici klasördeki dosyalar taşınabilir.".into());
+        }
+
         let filename = src.file_name().unwrap().to_string_lossy().to_string();
         let dest = download_dir.join(filename);
         
@@ -209,6 +220,9 @@ async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>) -> Result<
     for path_str in file_paths {
         let path = PathBuf::from(&path_str);
         if !path.exists() { continue; }
+        if !path.starts_with(&temp_dir) {
+            continue;
+        }
         
         let filename = path.file_name().unwrap().to_string_lossy().to_string();
         zip.start_file(filename, options.clone()).map_err(|e| e.to_string())?;
@@ -315,6 +329,7 @@ fn main() {
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             parse_youtube,
             search_youtube,
