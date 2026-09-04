@@ -281,21 +281,31 @@ fn update_in_place() -> Result<(), Box<dyn std::error::Error>> {
         .build()?;
 
     // 1. GitHub'daki en son sürümü oku
-    let latest_version = client.get(VERSION_URL).send()?.text()?.trim().to_string();
+    let latest_version_req = client.get(VERSION_URL).send();
+    if latest_version_req.is_err() {
+        return Err("Sürüm kontrolü yapılamadı (İnternet yok veya GitHub'a ulaşılamıyor).".into());
+    }
+    
+    let latest_version = latest_version_req.unwrap().text()?.trim().to_string();
 
     // Sürüm aynıysa hiçbir şey yapma
     if latest_version.is_empty() || latest_version == CURRENT_VERSION {
         return Ok(());
     }
 
-    let temp_file = exe_dir.join("update_download.tmp");
-    let old_file = exe_dir.join("musicsy.old"); // app.old değil, musicsy.old yapıldı
+    let temp_file = exe_dir.join("musicsy_new.exe");
+    let script_file = exe_dir.join("update_musicsy.bat");
 
+    // Eski kalıntıları temizle
     let _ = fs::remove_file(&temp_file);
-    let _ = fs::remove_file(&old_file);
+    let _ = fs::remove_file(&script_file);
 
     // 2. Yeni dosyayı indir
     let mut response = client.get(DOWNLOAD_URL).send()?;
+    if !response.status().is_success() {
+        return Err(format!("Güncelleme dosyası indirilemedi. HTTP Kodu: {}", response.status()).into());
+    }
+
     let mut file = fs::File::create(&temp_file)?;
     response.copy_to(&mut file)?;
     drop(file);
@@ -303,26 +313,38 @@ fn update_in_place() -> Result<(), Box<dyn std::error::Error>> {
     // Bir sonraki açılışta sürüm değişmemişse sonsuz döngüye girmesin diye kilit bırakıyoruz
     let _ = fs::File::create(&lock_file);
 
-    // 3. Dosya takası
-    fs::rename(&current_exe, &old_file)?;
-    fs::rename(&temp_file, &current_exe)?;
+    // 3. Dosya takası için güvenilir bir Batch (CMD) scripti oluşturuyoruz.
+    // Bu script arka planda çalışıp musicsy kapanana kadar bekleyecek, sonra dosyayı değiştirip yeniden açacak.
+    let current_exe_str = current_exe.to_str().unwrap();
+    let temp_file_str = temp_file.to_str().unwrap();
+    
+    let script_content = format!(
+        "@echo off\n\
+         :loop\n\
+         move /y \"{temp}\" \"{current}\" >nul 2>&1\n\
+         if errorlevel 1 (\n\
+             timeout /t 1 /nobreak > NUL\n\
+             goto loop\n\
+         )\n\
+         start \"\" \"{current}\"\n\
+         del \"%~f0\"\n",
+        temp = temp_file_str,
+        current = current_exe_str
+    );
 
-    // 4. Yeni sürümü hemen başlat
-    Command::new(&current_exe).spawn()?;
+    fs::write(&script_file, script_content)?;
 
-    // 5. Arka planda terminal penceresi açmadan eski musicsy.old dosyasını sil
+    // 4. Scripti arka planda gizlice çalıştır
     #[cfg(windows)]
     {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
-        let old_file_str = old_file.to_str().unwrap_or("");
-        let cleanup_cmd = format!("timeout /t 2 /nobreak > NUL & del /f /q \"{}\"", old_file_str);
-
         Command::new("cmd")
-            .args(&["/C", &cleanup_cmd])
+            .args(&["/C", script_file.to_str().unwrap()])
             .creation_flags(CREATE_NO_WINDOW)
             .spawn()?;
     }
 
+    // 5. Mevcut uygulamayı kapat ki script dosyayı taşıyabilsin
     std::process::exit(0);
 }
 

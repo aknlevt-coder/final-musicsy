@@ -34,7 +34,8 @@ const Header = () => {
         <h1>Spotify & YouTube to MP3</h1>
         <p>Çalma listesi veya şarkı linkini yapıştırın, anında indirin.</p>
       </div>
-      <div style={{ textAlign: 'right' }}>
+      <div style={{ textAlign: 'right', display: 'flex', alignItems: 'center', gap: '10px' }}>
+        <span style={{ color: '#4caf50', fontWeight: 'bold', fontSize: '14px' }}>[GÜNCEL]</span>
         <button 
           onClick={handleSelectFolder} 
           style={{ 
