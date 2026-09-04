@@ -16,8 +16,7 @@ use std::process::Command;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
-
-const CURRENT_VERSION: &str = "1.0.0"; // Şu anki uygulamanın sürümü
+const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 const VERSION_URL: &str = "https://raw.githubusercontent.com/aknlevt-coder/final-musicsy/main/version.txt";
 const DOWNLOAD_URL: &str = "https://github.com/aknlevt-coder/final-musicsy/releases/download/musicsyLatest/musicsy.exe";
 // =========================================================================
@@ -285,7 +284,7 @@ fn update_in_place() -> Result<(), Box<dyn std::error::Error>> {
     let exe_dir = current_exe.parent().ok_or("Uygulama dizini bulunamadı")?;
 
     let temp_file = exe_dir.join("update_download.tmp");
-    let old_file = exe_dir.join("app.old");
+    let old_file = exe_dir.join("musicsy.old");
 
     // Eski geçici dosyalar kalmışsa temizle
     let _ = fs::remove_file(&temp_file);
@@ -326,8 +325,6 @@ fn main() {
     if let Err(e) = update_in_place() {
         let _ = std::fs::write("guncelleme_log.txt", format!("Hata Detayı: {:?}", e));
     }
-
-    tauri::Builder::default()
     // ... geri kalanı aynı
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
