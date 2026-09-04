@@ -1,3 +1,4 @@
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use tauri::{AppHandle, Manager, Emitter}; // v2 için Manager ve Emitter eklendi
 use tauri_plugin_shell::ShellExt;
 use tauri_plugin_shell::process::CommandEvent;
@@ -106,10 +107,15 @@ async fn search_youtube(app: AppHandle, query: String) -> Result<TrackInfo, Stri
 async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) -> Result<String, String> {
     let clean_title = title.replace(|c: char| !c.is_alphanumeric() && c != ' ', "");
     
-    // İşletim sisteminin geçici (Temp) klasörüne indiriyoruz
+    // İşletim sisteminin geçici (Temp) klasörüne indiriyoruz[cite: 3]
     let temp_dir = std::env::temp_dir();
     let output_path = temp_dir.join(format!("{}.mp3", clean_title));
     let output_str = output_path.to_str().unwrap().to_string();
+
+    // 1. Gömülü FFmpeg klasörünün yolunu dinamik olarak buluyoruz
+    let resource_dir = app.path().resource_dir().map_err(|e| e.to_string())?;
+    let ffmpeg_dir = resource_dir.join("ffmpeg");
+    let ffmpeg_str = ffmpeg_dir.to_str().unwrap().to_string();
 
     let (mut rx, _child) = app.shell()
         .sidecar("yt-dlp")
@@ -120,6 +126,8 @@ async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) 
             "--audio-format", "mp3",
             "--audio-quality", "0",
             "--extractor-args", "youtube:player_client=android,ios",
+            // 2. yt-dlp'ye bu klasörü gösteriyoruz
+            "--ffmpeg-location", &ffmpeg_str,
             "--newline",
             "-o", &output_str,
             "--no-playlist"
@@ -154,7 +162,7 @@ async fn download_mp3(app: AppHandle, url: String, title: String, index: usize) 
     }
 
     if output_path.exists() {
-        // İndirilen geçici dosyanın tam yolunu frontend'e döndür
+        // İndirilen geçici dosyanın tam yolunu frontend'e döndür[cite: 3]
         Ok(output_str)
     } else {
         Err(error_output)
@@ -169,7 +177,7 @@ async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>) -> Result<
 
     let download_dir = app.path().download_dir().unwrap_or_else(|_| PathBuf::from("C:/"));
 
-    // Tek dosyaysa ZIP yapmaya gerek yok, direkt taşı
+    // Tek dosyaysa ZIP yapmaya gerek yok, direkt taşı[cite: 3]
     if file_paths.len() == 1 {
         let src = PathBuf::from(&file_paths[0]);
         let filename = src.file_name().unwrap().to_string_lossy().to_string();
@@ -182,7 +190,7 @@ async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>) -> Result<
         return Ok(format!("Şarkı kaydedildi: {}", dest.display()));
     }
 
-    // Birden fazla dosyaysa ZIP arşivi oluştur
+    // Birden fazla dosyaysa ZIP arşivi oluştur[cite: 3]
     let timestamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
     let zip_filename = format!("MusicSy_Paket_{}.zip", timestamp);
     let dest_path = download_dir.join(&zip_filename);
@@ -203,7 +211,7 @@ async fn create_zip_and_save(app: AppHandle, file_paths: Vec<String>) -> Result<
         f.read_to_end(&mut buffer).map_err(|e| e.to_string())?;
         zip.write_all(&buffer).map_err(|e| e.to_string())?;
         
-        // Geçici dosyayı sil
+        // Geçici dosyayı sil[cite: 3]
         let _ = std::fs::remove_file(&path);
     }
     

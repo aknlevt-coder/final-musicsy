@@ -39,6 +39,9 @@
     },
     "externalBin": [
       "binaries/yt-dlp"
+    ],
+    "resources": [
+      "ffmpeg/*"
     ]
   }
 }
